@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>UFO Hyperspace XR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.150.1/build/three.module.js"}}</script>
+<style>
+body{margin:0;overflow:hidden;background:#000;font-family:monospace}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column}
+#start-button{padding:40px 80px;font-size:32px;background:linear-gradient(45deg,#ff006e,#8338ec);color:#fff;border:none;cursor:pointer;text-shadow:0 0 20px #ff006e;border-radius:10px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="overlay">
+<h1 style="color:#0ff;text-shadow:0 0 20px #0ff">UFO HYPERSPACE</h1>
+<button id="start-button">START JOURNEY</button>
+<p style="color:#fff">Pass 10 gates to unlock hyperdrive!</p>
+</div>
+<script type="module">
+import*as THREE from'three';
+
+class UFOGame{
+constructor(){
+this.scene=null;
+this.camera=null;
+this.renderer=null;
+this.clock=new THREE.Clock();
+this.xrSession=null;
+this.controllers=[];
+this.ufo=null;
+this.gates=[];
+this.particles=[];
+this.planet=null;
+this.clouds=[];
+this.gameState='menu';
+this.score=0;
+this.baseSpeed=0.012;
+this.speed=this.baseSpeed;
+this.boostAvailable=false;
+this.boosting=false;
+this.boostEndTime=0;
+this.consecutiveHits=0;
+this.scoreText=null;
+this.planetStartZ=-100;
+this.planetCurrentZ=this.planetStartZ;
+this.init();
+}
+
+init(){
+this.scene=new THREE.Scene();
+this.scene.fog=new THREE.Fog(0x000033,1,20);
+this.camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.01,200);
+
+this.renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+this.renderer.setSize(innerWidth,innerHeight);
+this.renderer.xr.enabled=true;
+this.renderer.shadowMap.enabled=true;
+document.body.appendChild(this.renderer.domElement);
+
+// Classic UFO lighting
+this.scene.add(new THREE.AmbientLight(0x404060,0.4));
+const light1=new THREE.DirectionalLight(0xffffff,0.8);
+light1.position.set(1,1,1);
+this.scene.add(light1);
+const light2=new THREE.PointLight(0x00ffff,2,10);
+light2.position.set(0,-2,0);
+this.scene.add(light2);
+
+this.create1950sUFO();
+this.createPlanet();
+this.createLevel();
+this.createParticles();
+this.create3DHUD();
+
+document.getElementById('start-button').addEventListener('click',()=>this.startAR());
+window.addEventListener('resize',()=>this.onResize());
+}
+
+create1950sUFO(){
+const group=new THREE.Group();
+
+// Main disc body - classic 1950s style (FIXED ROTATION)
+const discGeo=new THREE.CylinderGeometry(0.045,0.045,0.01,24);
+const discMat=new THREE.MeshStandardMaterial({
+color:0x8a8a8a,
+metalness:0.8,
+roughness:0.2,
+emissive:0x111122,
+emissiveIntensity:0.1
+});
+const disc=new THREE.Mesh(discGeo,discMat);
+disc.rotation.x=Math.PI/2; // FIXED: Changed from rotation.z to rotation.x
+group.add(disc);
+
+// Add panel lines on disc
+for(let i=0;i<8;i++){
+const angle=(i/8)*Math.PI*2;
+const line=new THREE.Mesh(
+new THREE.BoxGeometry(0.08,0.001,0.001),
+new THREE.MeshBasicMaterial({color:0x555555})
+);
+line.position.y=0.005;
+line.rotation.y=angle;
+group.add(line);
+}
+
+// Central dome with cupola
+const domeGeo=new THREE.SphereGeometry(0.018,16,8,0,Math.PI*2,0,Math.PI/2.2);
+const domeMat=new THREE.MeshPhysicalMaterial({
+color:0x7a7a8a,
+metalness:0.6,
+roughness:0.3,
+clearcoat:0.5,
+clearcoatRoughness:0.1
+});
+const dome=new THREE.Mesh(domeGeo,domeMat);
+dome.position.y=0.005;
+group.add(dome);
+
+// Windows around dome
+for(let i=0;i<6;i++){
+const window=new THREE.Mesh(
+new THREE.BoxGeometry(0.004,0.006,0.001),
+new THREE.MeshBasicMaterial({
+color:0xffffaa,
+emissive:0xffffaa,
+emissiveIntensity:0.5
+})
+);
+const angle=(i/6)*Math.PI*2;
+window.position.x=Math.cos(angle)*0.014;
+window.position.z=Math.sin(angle)*0.014;
+window.position.y=0.008;
+window.lookAt(0,window.position.y,0);
+group.add(window);
+}
+
+// Top beacon
+const beacon=new THREE.Mesh(
+new THREE.SphereGeometry(0.004,8,8),
+new THREE.MeshBasicMaterial({
+color:0xff0000,
+emissive:0xff0000
+})
+);
+beacon.position.y=0.018;
+group.add(beacon);
+
+// Bottom rim with lights
+const rimGeo=new THREE.TorusGeometry(0.042,0.003,6,24);
+const rimMat=new THREE.MeshStandardMaterial({
+color:0x6a6a6a,
+metalness:0.9,
+roughness:0.1
+});
+const rim=new THREE.Mesh(rimGeo,rimMat);
+rim.rotation.x=Math.PI/2;
+rim.position.y=-0.003;
+group.add(rim);
+
+// Running lights around bottom edge
+for(let i=0;i<12;i++){
+const light=new THREE.Mesh(
+new THREE.SphereGeometry(0.002),
+new THREE.MeshBasicMaterial({
+color:0x00ffff,
+emissive:0x00ffff
+})
+);
+const angle=(i/12)*Math.PI*2;
+light.position.x=Math.cos(angle)*0.042;
+light.position.z=Math.sin(angle)*0.042;
+light.position.y=-0.005;
+light.userData={angle:angle,index:i};
+group.add(light);
+}
+
+// Landing gear bumps
+for(let i=0;i<3;i++){
+const gear=new THREE.Mesh(
+new THREE.SphereGeometry(0.003,6,6),
+new THREE.MeshStandardMaterial({
+color:0x5a5a5a,
+metalness:0.7,
+roughness:0.3
+})
+);
+const angle=(i/3)*Math.PI*2;
+gear.position.x=Math.cos(angle)*0.025;
+gear.position.z=Math.sin(angle)*0.025;
+gear.position.y=-0.008;
+group.add(gear);
+}
+
+// Subtle glow underneath
+const glowGeo=new THREE.ConeGeometry(0.025,0.04,8,1,true);
+const glowMat=new THREE.MeshBasicMaterial({
+color:0x00ffff,
+transparent:true,
+opacity:0.15,
+side:THREE.DoubleSide
+});
+const glow=new THREE.Mesh(glowGeo,glowMat);
+glow.position.y=-0.02;
+group.add(glow);
+
+group.position.set(0,0,-0.3);
+this.ufo=group;
+this.scene.add(this.ufo);
+}
+
+createPlanet(){
+const group=new THREE.Group();
+
+const planetGeo=new THREE.SphereGeometry(5,32,32);
+const planetMat=new THREE.MeshPhongMaterial({
+color:0x4488ff,
+emissive:0x112244,
+emissiveIntensity:0.3,
+shininess:30
+});
+const planet=new THREE.Mesh(planetGeo,planetMat);
+group.add(planet);
+
+const atmosGeo=new THREE.SphereGeometry(5.2,32,32);
+const atmosMat=new THREE.MeshBasicMaterial({
+color:0x88ccff,
+transparent:true,
+opacity:0.2,
+side:THREE.BackSide
+});
+const atmos=new THREE.Mesh(atmosGeo,atmosMat);
+group.add(atmos);
+
+// Add surface features
+for(let i=0;i<50;i++){
+const feature=new THREE.Mesh(
+new THREE.SphereGeometry(Math.random()*0.3+0.1,8,8),
+new THREE.MeshPhongMaterial({
+color:new THREE.Color(0.3+Math.random()*0.2,0.4+Math.random()*0.2,0.8+Math.random()*0.2)
+})
+);
+const phi=Math.random()*Math.PI*2;
+const theta=Math.random()*Math.PI;
+feature.position.x=4.9*Math.sin(theta)*Math.cos(phi);
+feature.position.y=4.9*Math.sin(theta)*Math.sin(phi);
+feature.position.z=4.9*Math.cos(theta);
+group.add(feature);
+}
+
+// ADD DRIFTING CLOUDS
+for(let i=0;i<15;i++){
+const cloudGroup=new THREE.Group();
+
+
+// Create fluffy cloud from multiple spheres
+for(let j=0;j<5;j++){
+const cloudPart=new THREE.Mesh(
+new THREE.SphereGeometry(0.2+Math.random()*0.3,8,6),
+new THREE.MeshBasicMaterial({
+color:0xffffff,
+transparent:true,
+opacity:0.3+Math.random()*0.2,
+side:THREE.DoubleSide
+})
+);
+cloudPart.position.x=(Math.random()-0.5)*0.4;
+cloudPart.position.y=(Math.random()-0.5)*0.2;
+cloudPart.position.z=(Math.random()-0.5)*0.2;
+cloudPart.scale.x=1+Math.random()*0.5;
+cloudPart.scale.y=0.6+Math.random()*0.3;
+cloudGroup.add(cloudPart);
+}
+
+
+// Position cloud in atmosphere
+const radius=5.3+Math.random()*0.4;
+const phi=Math.random()*Math.PI*2;
+const theta=Math.random()*Math.PI;
+cloudGroup.position.x=radius*Math.sin(theta)*Math.cos(phi);
+cloudGroup.position.y=radius*Math.sin(theta)*Math.sin(phi);
+cloudGroup.position.z=radius*Math.cos(theta);
+cloudGroup.lookAt(0,0,0);
+cloudGroup.userData={
+driftSpeed:0.0002+Math.random()*0.0003,
+orbitAngle:phi,
+orbitTheta:theta,
+radius:radius
+};
+this.clouds.push(cloudGroup);
+group.add(cloudGroup);
+}
+
+group.position.z=this.planetStartZ;
+this.planet=group;
+this.scene.add(this.planet);
+}
+
+createLevel(){
+for(let i=0;i<50;i++){
+const gate=new THREE.Group();
+const ring=new THREE.Mesh(
+new THREE.TorusGeometry(0.15,0.008,6,12),
+new THREE.MeshBasicMaterial({
+color:new THREE.Color().setHSL((i*0.15)%1,1,0.5),
+transparent:true,
+opacity:0.9
+})
+);
+gate.add(ring);
+const field=new THREE.Mesh(
+new THREE.CircleGeometry(0.14,12),
+new THREE.MeshBasicMaterial({
+color:new THREE.Color().setHSL((i*0.15)%1,0.8,0.7),
+transparent:true,
+opacity:0.1,
+side:THREE.DoubleSide
+})
+);
+gate.add(field);
+const glow=new THREE.Mesh(
+new THREE.TorusGeometry(0.15,0.02,6,12),
+new THREE.MeshBasicMaterial({
+color:new THREE.Color().setHSL((i*0.15)%1,1,0.5),
+transparent:true,
+opacity:0.3
+})
+);
+gate.add(glow);
+const angle=Math.random()*Math.PI*2;
+const radius=Math.random()*0.25+0.05;
+gate.position.set(
+Math.cos(angle)*radius,
+Math.sin(angle)*radius*0.7,
+-2-i*1.5
+);
+gate.userData={id:i,passed:false,blinkSpeed:0.002};
+this.gates.push(gate);
+this.scene.add(gate);
+}
+}
+
+createParticles(){
+const geometry=new THREE.BufferGeometry();
+const positions=new Float32Array(300*3);
+const colors=new Float32Array(300*3);
+for(let i=0;i<300*3;i+=3){
+positions[i]=(Math.random()-0.5)*3;
+positions[i+1]=(Math.random()-0.5)*2;
+positions[i+2]=Math.random()*-30;
+colors[i]=0.5+Math.random()*0.5;
+colors[i+1]=0.5+Math.random()*0.5;
+colors[i+2]=1;
+}
+geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));
+geometry.setAttribute('color',new THREE.BufferAttribute(colors,3));
+const material=new THREE.PointsMaterial({
+size:0.01,
+vertexColors:true,
+transparent:true,
+opacity:0.8,
+blending:THREE.AdditiveBlending
+});
+this.particles=new THREE.Points(geometry,material);
+this.scene.add(this.particles);
+}
+
+create3DHUD(){
+const canvas=document.createElement('canvas');
+canvas.width=512;
+canvas.height=128;
+const ctx=canvas.getContext('2d');
+ctx.fillStyle='#0ff';
+ctx.font='bold 36px monospace';
+ctx.fillText('GATES: 0',10,40);
+ctx.fillText('BOOST: LOCKED',10,80);
+
+const texture=new THREE.CanvasTexture(canvas);
+const material=new THREE.MeshBasicMaterial({
+map:texture,
+transparent:true,
+side:THREE.DoubleSide
+});
+const geometry=new THREE.PlaneGeometry(0.4,0.1);
+this.scoreText=new THREE.Mesh(geometry,material);
+this.scoreText.position.set(0,0.35,-0.8);
+this.scoreText.userData={canvas,ctx,texture};
+this.scene.add(this.scoreText);
+}
+
+updateHUD(){
+const{canvas,ctx,texture}=this.scoreText.userData;
+ctx.clearRect(0,0,canvas.width,canvas.height);
+ctx.fillStyle='#0ff';
+ctx.font='bold 36px monospace';
+ctx.fillText(`GATES: ${this.score}`,10,40);
+
+
+if(this.boosting){
+const timeLeft=Math.ceil((this.boostEndTime-Date.now())/1000);
+ctx.fillStyle='#ff0';
+ctx.fillText(`HYPERDRIVE: ${timeLeft}s`,10,80);
+}else if(this.boostAvailable){
+ctx.fillStyle='#0f0';
+ctx.fillText('BOOST: READY! (TRIGGER)',10,80);
+}else{
+ctx.fillStyle='#888';
+ctx.fillText(`BOOST: ${10-this.consecutiveHits} MORE`,10,80);
+}
+texture.needsUpdate=true;
+
+this.planetCurrentZ=this.planetStartZ+this.score*1.5;
+if(this.planetCurrentZ>-20){
+this.planetCurrentZ=-20;
+}
+}
+
+async startAR(){
+if(!navigator.xr){
+alert('WebXR not supported');
+return;
+}
+try{
+const supported=await navigator.xr.isSessionSupported('immersive-ar');
+if(!supported){
+alert('AR not supported');
+return;
+}
+const session=await navigator.xr.requestSession('immersive-ar',{
+requiredFeatures:['local-floor'],
+optionalFeatures:['dom-overlay'],
+domOverlay:{root:document.body}
+});
+this.onSessionStarted(session);
+}catch(e){
+alert('Failed to start AR: '+e.message);
+}
+}
+
+onSessionStarted(session){
+this.xrSession=session;
+document.getElementById('overlay').classList.add('hidden');
+this.renderer.xr.setReferenceSpaceType('local');
+this.renderer.xr.setSession(session);
+
+for(let i=0;i<2;i++){
+const controller=this.renderer.xr.getController(i);
+controller.addEventListener('selectstart',()=>this.onTrigger());
+this.controllers.push(controller);
+this.scene.add(controller);
+const pointer=new THREE.Mesh(
+new THREE.ConeGeometry(0.01,0.03,4),
+new THREE.MeshBasicMaterial({color:0x00ff00})
+);
+pointer.rotation.x=-Math.PI/2;
+controller.add(pointer);
+}
+
+this.startGame();
+this.renderer.setAnimationLoop((t,f)=>this.render(t,f));
+session.addEventListener('end',()=>this.onSessionEnd());
+}
+
+startGame(){
+this.gameState='playing';
+this.score=0;
+this.consecutiveHits=0;
+this.boostAvailable=false;
+this.boosting=false;
+this.planetCurrentZ=this.planetStartZ;
+this.updateHUD();
+this.gates.forEach((g,i)=>{
+g.position.z=-2-i*1.5;
+g.userData.passed=false;
+g.visible=true;
+});
+}
+
+onTrigger(){
+if(this.boostAvailable&&!this.boosting){
+this.activateBoost();
+}
+}
+
+activateBoost(){
+this.boosting=true;
+this.boostAvailable=false;
+this.speed=this.baseSpeed*3;
+this.boostEndTime=Date.now()+20000; // 20 seconds
+this.updateHUD();
+}
+
+deactivateBoost(){
+this.boosting=false;
+this.speed=this.baseSpeed;
+this.consecutiveHits=0;
+this.updateHUD();
+}
+
+checkCollisions(){
+if(this.gameState!=='playing'||!this.ufo)return;
+const ufoPos=this.ufo.position;
+let hitGate=false;
+
+this.gates.forEach(gate=>{
+if(gate.userData.passed||!gate.visible)return;
+const dist=ufoPos.distanceTo(gate.position);
+if(dist<0.2&&gate.position.z>-0.4&&gate.position.z<0.1){
+this.score++;
+gate.userData.passed=true;
+gate.visible=false;
+hitGate=true;
+this.consecutiveHits++;
+
+
+// Check if boost unlocked
+if(this.consecutiveHits===10&&!this.boosting){
+this.boostAvailable=true;
+}
+// Keep consecutive hits counting during boost
+if(this.boosting&&this.consecutiveHits>=10){
+this.consecutiveHits=10; // Cap at 10 to keep boost ready after
+}
+// Flash effect
+const flash=new THREE.Mesh(
+new THREE.RingGeometry(0.1,0.2,8),
+new THREE.MeshBasicMaterial({
+color:this.boosting?0xffff00:0xffffff,
+transparent:true,
+opacity:1,
+blending:THREE.AdditiveBlending
+})
+);
+flash.position.copy(gate.position);
+this.scene.add(flash);
+setTimeout(()=>this.scene.remove(flash),300);
+this.updateHUD();
+}
+});
+
+// Missed a gate zone - lose boost/streak
+this.gates.forEach(gate=>{
+if(!gate.userData.passed&&gate.visible&&gate.position.z>0.1){
+if(this.boosting){
+this.deactivateBoost();
+}else if(this.consecutiveHits>0&&this.consecutiveHits<10){
+this.consecutiveHits=0;
+this.updateHUD();
+}
+}
+});
+}
+
+onSessionEnd(){
+this.gameState='menu';
+document.getElementById('overlay').classList.remove('hidden');
+this.renderer.setAnimationLoop(null);
+this.xrSession=null;
+}
+
+render(time,frame){
+if(!frame||this.gameState!=='playing')return;
+
+// Check boost timer
+if(this.boosting&&Date.now()>this.boostEndTime){
+this.deactivateBoost();
+}
+
+// UFO follows controller
+if(this.controllers[0]&&this.controllers[0].position){
+const ctrl=this.controllers[0];
+this.ufo.position.x+=(ctrl.position.x-this.ufo.position.x)*0.2;
+this.ufo.position.y+=(ctrl.position.y-this.ufo.position.y)*0.2;
+this.ufo.rotation.z=-ctrl.position.x*0.5;
+this.ufo.rotation.x=ctrl.position.y*0.3;
+// Spin the whole UFO slowly
+this.ufo.rotation.y+=this.boosting?0.02:0.005;
+// Animate windows during boost
+this.ufo.children.forEach(child=>{
+if(child.material&&child.material.emissive){
+// Windows pulse during boost
+if(this.boosting){
+child.material.emissiveIntensity=0.3+Math.sin(time*0.03)*0.4;
+}else{
+child.material.emissiveIntensity=0.3;
+}
+}
+// Subtle glow effect for boost
+if(child.userData&&child.userData.isGlow){
+child.material.opacity=this.boosting?0.15+Math.sin(time*0.01)*0.1:0.0;
+}
+});
+}
+
+// Move world forward
+this.gates.forEach(gate=>{
+gate.position.z+=this.speed;
+gate.rotation.z+=this.boosting?0.05:0.02;
+// Rapid blinking during boost
+const blinkSpeed=this.boosting?0.01:0.002;
+if(gate.children[1]){
+gate.children[1].material.opacity=0.05+Math.sin(time*blinkSpeed+gate.userData.id)*0.05;
+}
+// Gate glow pulses faster during boost
+if(gate.children[2]&&this.boosting){
+gate.children[2].material.opacity=0.3+Math.sin(time*0.02)*0.3;
+}
+if(gate.position.z>1){
+gate.position.z-=75;
+gate.userData.passed=false;
+gate.visible=true;
+const angle=Math.random()*Math.PI*2;
+const radius=Math.random()*0.25+0.05;
+gate.position.x=Math.cos(angle)*radius;
+gate.position.y=Math.sin(angle)*radius*0.7;
+}
+});
+
+// Planet with animated clouds
+if(this.planet){
+this.planet.rotation.y+=this.boosting?0.002:0.0005;
+this.planet.position.z+=(this.planetCurrentZ-this.planet.position.z)*0.02;
+this.planet.children[1].material.opacity=0.15+Math.sin(time*0.001)*0.05;
+// Animate clouds drifting
+this.clouds.forEach(cloud=>{
+cloud.userData.orbitAngle+=cloud.userData.driftSpeed*(this.boosting?2:1);
+const theta=cloud.userData.orbitTheta;
+const phi=cloud.userData.orbitAngle;
+const r=cloud.userData.radius;
+cloud.position.x=r*Math.sin(theta)*Math.cos(phi);
+cloud.position.y=r*Math.sin(theta)*Math.sin(phi);
+cloud.position.z=r*Math.cos(theta);
+cloud.lookAt(0,0,0);
+// Subtle opacity variation
+cloud.children.forEach(part=>{
+if(part.material){
+part.material.opacity=0.25+Math.sin(time*0.0005+cloud.userData.orbitAngle)*0.15;
+}
+});
+});
+}
+
+// Hyperspace particles
+const positions=this.particles.geometry.attributes.position.array;
+const particleSpeed=this.boosting?this.speed*3:this.speed*2;
+for(let i=0;i<positions.length;i+=3){
+positions[i+2]+=particleSpeed;
+if(positions[i+2]>1){
+positions[i+2]=-30;
+positions[i]=(Math.random()-0.5)*3;
+positions[i+1]=(Math.random()-0.5)*2;
+}
+}
+this.particles.geometry.attributes.position.needsUpdate=true;
+
+this.checkCollisions();
+this.renderer.render(this.scene,this.camera);
+}
+
+onResize(){
+this.camera.aspect=innerWidth/innerHeight;
+this.camera.updateProjectionMatrix();
+this.renderer.setSize(innerWidth,innerHeight);
+}
+}
+
+new UFOGame();
+</script>
+</body>
+</html>
